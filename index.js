@@ -26,7 +26,7 @@ const CODEX_AUTH_PATH = process.env.CODEX_AUTH_PATH ||
 const OPENAI_API_URL = 'https://chatgpt.com/backend-api/codex/responses';
 const OPENAI_AUTH_URL = 'https://auth.openai.com/oauth/token';
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-const DEFAULT_MODEL = process.env.OPENAI_WEBSEARCH_MODEL || 'gpt-5.4';
+const DEFAULT_MODEL = process.env.OPENAI_WEBSEARCH_MODEL || 'gpt-5.6-luna';
 
 // 5 minute buffer before expiry
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -265,7 +265,7 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'OpenAI model to use (default: gpt-5.4). Must be available in your Codex subscription.',
+          description: 'OpenAI model to use (default: gpt-5.6-luna). Must be available in your Codex subscription.',
         },
       },
       required: ['query'],
@@ -288,7 +288,7 @@ const TOOLS = [
         },
         model: {
           type: 'string',
-          description: 'OpenAI model to use (default: gpt-5.4).',
+          description: 'OpenAI model to use (default: gpt-5.6-luna).',
         },
       },
       required: ['query'],
