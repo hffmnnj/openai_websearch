@@ -1,11 +1,12 @@
 {
   "name": "openai_websearch",
-  "version": "1.1.0",
-  "description": "Self-hostable MCP server and reusable API client for OpenAI's native web search via Codex/ChatGPT auth. Zero deps.",
+  "version": "1.2.0",
+  "description": "Self-hostable MCP server + reusable API client for OpenAI's native web search via ChatGPT/Codex auth. OAuth login built in, token auto-refresh. Zero API keys.",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",
+    "./auth": "./lib/auth.js",
     "./mcp": "./index.js",
     "./package.json": "./package.json"
   },
@@ -15,6 +16,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "login": "node index.js login",
+    "login:device": "node index.js login --device-code",
+    "auth-status": "node index.js auth-status",
     "test": "node test/client.test.js"
   },
   "keywords": [
@@ -24,8 +28,9 @@
     "codex",
     "chatgpt",
     "search",
+    "image-search",
     "exa-alternative",
-    "zero-dependency"
+    "model-context-protocol"
   ],
   "author": "James Hoffmann",
   "license": "MIT",
@@ -43,5 +48,8 @@
     "README.md",
     "LICENSE"
   ],
-  "dependencies": {}
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25.0"
+  }
 }

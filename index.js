@@ -1,192 +1,169 @@
 #!/usr/bin/env node
 
 /**
- * openai_websearch — MCP server entry point.
+ * openai_websearch — MCP server (official @modelcontextprotocol/sdk).
  *
- * The reusable API client lives in ./lib/index.js.
- * This file wraps it as an MCP-over-stdio server.
- *
- * Tools exposed:
+ * Exposes OpenAI's native server-side web search as MCP tools:
  *   - web_search       — Text web search with configurable context size
- *   - image_search     — Image web search, returns image URLs
+ *   - image_search     — Image search, returns image URLs
+ *
+ * Auth: browser OAuth (URL), device-code flow, or existing Codex auth.
+ * Run `node index.js login` or `node index.js login --device-code` to authenticate.
  */
 
-import { createInterface } from 'readline';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
 import { OpenAIWebSearch } from './lib/index.js';
+import {
+  authenticateBrowser,
+  authenticateDeviceCode,
+  loadAuthFile,
+  defaultAuthPath,
+  inferAccountId,
+  saveAuthFile,
+} from './lib/auth.js';
 
-const PROTOCOL_VERSION = '2024-11-05';
+// ─── CLI login command ────────────────────────────────────────────────────────
 
-// ─── Tool Definitions ─────────────────────────────────────────────────────────
+async function cmdLogin(args) {
+  try {
+    let result;
+    if (args.includes('--device-code')) {
+      result = await authenticateDeviceCode();
+    } else {
+      result = await authenticateBrowser();
+    }
 
-const TOOLS = [
-  {
-    name: 'web_search',
-    description: 'Search the web using OpenAI\'s native server-side web search. Returns clean, up-to-date results with real URLs and citations. Powered by your ChatGPT/Codex subscription.\n\nBest for:\n- Finding current information, news, or facts\n- Research with real citations and URLs\n- Getting summarized answers with sources\n\nUsage notes:\n- search_context_size controls how much web content is retrieved: "low" (fast), "medium" (balanced, default), "high" (thorough)\n- Results include the queries OpenAI actually searched for\n- All search happens server-side at OpenAI, not locally',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'What to search for. Be specific for best results.',
-        },
-        context_size: {
-          type: 'string',
-          enum: ['low', 'medium', 'high'],
-          description: 'How much web context to retrieve. "low" = fast/cheap, "medium" = balanced (default), "high" = thorough/deep.',
-        },
-        model: {
-          type: 'string',
-          description: 'OpenAI model to use (default: gpt-5.6-luna). Must be available in your Codex subscription.',
-        },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'image_search',
-    description: 'Search the web for images using OpenAI\'s native web search with image results. Returns image URLs, titles, and source pages.\n\nBest for:\n- Finding relevant images from across the web\n- Getting image URLs you can use or reference\n- Visual research with real source URLs\n\nUsage notes:\n- Returns image URLs from web pages, not AI-generated images\n- context_size controls search depth\n- Results include source page URLs',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'What images to search for.',
-        },
-        context_size: {
-          type: 'string',
-          enum: ['low', 'medium', 'high'],
-          description: 'Search depth: "low" (fast), "medium" (default), "high" (thorough).',
-        },
-        model: {
-          type: 'string',
-          description: 'OpenAI model to use (default: gpt-5.6-luna).',
-        },
-      },
-      required: ['query'],
-    },
-  },
-];
+    const accountId = inferAccountId(result.tokens.access_token);
+    const path = saveAuthFile(result.tokens, {
+      idToken: result.tokens.id_token,
+      accountId,
+    });
+
+    console.error('[openai_websearch] Auth saved to ' + path);
+    console.error('[openai_websearch] You are authenticated. Start the MCP server normally to search.');
+    process.exit(0);
+  } catch (e) {
+    console.error('[openai_websearch] Login failed: ' + e.message);
+    process.exit(1);
+  }
+}
+
+async function cmdAuthStatus() {
+  const path = defaultAuthPath();
+  const data = loadAuthFile(path);
+  if (!data?.tokens?.access_token) {
+    console.error('[openai_websearch] Not authenticated. Run: node index.js login');
+    process.exit(1);
+  }
+  const expiry = data.tokens.access_token.split('.')[1];
+  let exp = 'unknown';
+  try {
+    const decoded = JSON.parse(Buffer.from(expiry, 'base64url').toString());
+    exp = new Date((decoded.exp || 0) * 1000).toISOString();
+  } catch {}
+  console.error('[openai_websearch] Auth file: ' + path);
+  console.error('[openai_websearch] Last refresh: ' + (data.last_refresh || 'unknown'));
+  console.error('[openai_websearch] Access token expires: ' + exp);
+  process.exit(0);
+}
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
-const client = new OpenAIWebSearch();
+function createServer() {
+  const server = new McpServer({
+    name: 'openai_websearch',
+    version: '1.2.0',
+  });
 
-function makeResponse(id, result) {
-  return JSON.stringify({ jsonrpc: '2.0', id, result });
-}
+  const client = new OpenAIWebSearch();
 
-function makeError(id, code, message) {
-  return JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } });
-}
-
-async function handleMessage(msg) {
-  const { id, method, params } = msg;
-
-  switch (method) {
-    case 'initialize':
-      return makeResponse(id, {
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: { tools: { listChanged: true } },
-        serverInfo: { name: 'openai_websearch', version: '1.1.0' },
+  server.registerTool(
+    'web_search',
+    {
+      title: 'Web Search',
+      description: `Search the web using OpenAI's native server-side web search. Returns clean, up-to-date results with real URLs and citations. Powered by your ChatGPT/Codex subscription.
+- contextSize: "low" (fast/cheap), "medium" (balanced, default), "high" (thorough/deep)
+- All search happens server-side at OpenAI, not locally
+- Results include the queries OpenAI actually searched for`,
+      inputSchema: z.object({
+        query: z.string().min(1).describe('What to search for. Be specific for best results.'),
+        context_size: z.enum(['low', 'medium', 'high']).optional().default('medium')
+          .describe('How much web context to retrieve'),
+        model: z.string().optional().describe('OpenAI model to use (default: gpt-5.6-luna)'),
+      }),
+    },
+    async ({ query, context_size, model }) => {
+      const result = await client.search(query, {
+        contextSize: context_size,
+        model,
       });
 
-    case 'notifications/initialized':
-      return null;
-
-    case 'tools/list':
-      return makeResponse(id, {
-        tools: TOOLS.map(t => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-        })),
-      });
-
-    case 'tools/call': {
-      const { name, arguments: args } = params;
-      const parsed = typeof args === 'string' ? JSON.parse(args) : (args || {});
-
-      try {
-        let result;
-        switch (name) {
-          case 'web_search':
-            result = await client.search(parsed.query, {
-              contextSize: parsed.context_size,
-              model: parsed.model,
-            });
-            break;
-          case 'image_search':
-            result = await client.imageSearch(parsed.query, {
-              contextSize: parsed.context_size,
-              model: parsed.model,
-            });
-            break;
-          default:
-            return makeError(id, -32601, `Unknown tool: ${name}`);
-        }
-
-        // Format output
-        const parts = [];
-        if (result.searchQueries.length > 0) {
-          parts.push(`**Searched for:** ${result.searchQueries.map(q => `"${q}"`).join(', ')}\n`);
-        }
-        if (result.text) {
-          parts.push(result.text);
-        }
-        if (result.usage) {
-          const u = result.usage;
-          parts.push(`\n---\n*Tokens: ${u.input_tokens || 0} in, ${u.output_tokens || 0} out (${u.total_tokens || 0} total)*`);
-        }
-
-        return makeResponse(id, {
-          content: [{ type: 'text', text: parts.join('\n') }],
-        });
-      } catch (e) {
-        return makeResponse(id, {
-          content: [{ type: 'text', text: `Error: ${e.message}` }],
-          isError: true,
-        });
+      const parts = [];
+      if (result.searchQueries.length > 0) {
+        parts.push(`**Searched for:** ${result.searchQueries.map(q => `"${q}"`).join(', ')}\n`);
       }
-    }
+      if (result.text) parts.push(result.text);
+      if (result.usage) {
+        const u = result.usage;
+        parts.push(`\n---\n*Tokens: ${u.input_tokens || 0} in, ${u.output_tokens || 0} out (${u.total_tokens || 0} total)*`);
+      }
+      return { content: [{ type: 'text', text: parts.join('\n') }] };
+    },
+  );
 
-    default:
-      return makeError(id, -32601, `Unknown method: ${method}`);
-  }
+  server.registerTool(
+    'image_search',
+    {
+      title: 'Image Search',
+      description: `Search the web for images using OpenAI's native web search. Returns image URLs, titles, and source pages.
+- Returns real image URLs from web pages, not AI-generated images
+- contextSize controls search depth`,
+      inputSchema: z.object({
+        query: z.string().min(1).describe('What images to search for.'),
+        context_size: z.enum(['low', 'medium', 'high']).optional().default('medium')
+          .describe('Search depth'),
+        model: z.string().optional().describe('OpenAI model to use (default: gpt-5.6-luna)'),
+      }),
+    },
+    async ({ query, context_size, model }) => {
+      const result = await client.imageSearch(query, {
+        contextSize: context_size,
+        model,
+      });
+
+      const parts = [];
+      if (result.searchQueries.length > 0) {
+        parts.push(`**Searched for:** ${result.searchQueries.map(q => `"${q}"`).join(', ')}\n`);
+      }
+      if (result.text) parts.push(result.text);
+      if (result.usage) {
+        const u = result.usage;
+        parts.push(`\n---\n*Tokens: ${u.input_tokens || 0} in, ${u.output_tokens || 0} out*`);
+      }
+      return { content: [{ type: 'text', text: parts.join('\n') }] };
+    },
+  );
+
+  return server;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  // Verify auth is available
-  try {
-    await client.auth.getValidToken();
-    process.stderr.write('[openai_websearch] Ready — auth loaded from ~/.codex/auth.json\n');
-  } catch (e) {
-    process.stderr.write(`[openai_websearch] Auth error: ${e.message}\n`);
-    process.stderr.write('[openai_websearch] Run "codex" and log in with your ChatGPT account first.\n');
-    process.exit(1);
-  }
+  const args = process.argv.slice(2);
 
-  const rl = createInterface({ input: process.stdin });
-  process.stderr.write('[openai_websearch] MCP server listening on stdio\n');
+  if (args.includes('login')) return cmdLogin(args);
+  if (args.includes('auth-status')) return cmdAuthStatus();
 
-  for await (const line of rl) {
-    if (!line.trim()) continue;
-
-    try {
-      const msg = JSON.parse(line);
-      const response = await handleMessage(msg);
-
-      if (response !== null) {
-        process.stdout.write(response + '\n');
-      }
-    } catch (e) {
-      process.stderr.write(`[openai_websearch] Error handling message: ${e.message}\n`);
-    }
-  }
+  const server = createServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error('[openai_websearch] MCP server running on stdio (official MCP SDK)');
 }
 
 main().catch(e => {
-  process.stderr.write(`[openai_websearch] Fatal: ${e.message}\n`);
+  console.error('[openai_websearch] Fatal: ' + e.message);
   process.exit(1);
 });
