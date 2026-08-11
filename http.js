@@ -10,9 +10,27 @@ import express from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpServer } from './mcp.js';
 
-export function createApp() {
+export function createApp({ token } = {}) {
   const app = express();
   app.use(express.json());
+
+  // Bearer token protection (if configured)
+  if (token) {
+    app.use((req, res, next) => {
+      // Health check stays open
+      if (req.path === '/ping') return next();
+      const auth = req.headers.authorization || '';
+      if (auth !== `Bearer ${token}`) {
+        res.setHeader('WWW-Authenticate', 'Bearer');
+        return res.status(401).json({
+          id: null,
+          jsonrpc: '2.0',
+          error: { code: -32001, message: 'Unauthorized: missing or invalid bearer token' },
+        });
+      }
+      next();
+    });
+  }
 
   app.all('/mcp', async (req, res) => {
     try {
@@ -39,8 +57,8 @@ export function createApp() {
   return app;
 }
 
-export function startServer(port, host) {
-  createApp().listen(port, host, () => {
-    console.error(`openai_websearch MCP on http://${host}:${port}/mcp`);
+export function startServer(port, host, { token } = {}) {
+  createApp({ token }).listen(port, host, () => {
+    console.error(`openai_websearch MCP on http://${host}:${port}/mcp${token ? ' (token protected)' : ''}`);
   });
 }

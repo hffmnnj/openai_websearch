@@ -85,6 +85,7 @@ async function main() {
     .option('--transport <stdio|http>', 'Transport type', process.env.OPENAI_WEBSEARCH_TRANSPORT || 'stdio')
     .option('--port <number>', 'HTTP port', process.env.OPENAI_WEBSEARCH_PORT || '3103')
     .option('--host <string>', 'HTTP host', process.env.OPENAI_WEBSEARCH_HOST || '0.0.0.0')
+    .option('--token <string>', 'Bearer token for HTTP auth', process.env.OPENAI_WEBSEARCH_TOKEN || '')
     .allowUnknownOption()
     .parse(process.argv);
 
@@ -92,7 +93,7 @@ async function main() {
 
   if (opts.transport === 'http') {
     const { startServer } = await import('./http.js');
-    startServer(parseInt(opts.port), opts.host);
+    startServer(parseInt(opts.port), opts.host, { token: opts.token || undefined });
   } else {
     const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
     const server = createMcpServer();
