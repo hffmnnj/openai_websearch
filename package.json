@@ -1,15 +1,47 @@
 {
   "name": "openai_websearch",
-  "version": "1.0.0",
-  "description": "Self-hostable MCP server that exposes OpenAI's native web search via the ChatGPT/Codex Responses API. Uses your existing Codex subscription for auth.",
+  "version": "1.1.0",
+  "description": "Self-hostable MCP server and reusable API client for OpenAI's native web search via Codex/ChatGPT auth. Zero deps.",
   "type": "module",
-  "main": "index.js",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./mcp": "./index.js",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "openai_websearch": "./index.js"
   },
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "test": "node test/client.test.js"
   },
+  "keywords": [
+    "openai",
+    "web-search",
+    "mcp",
+    "codex",
+    "chatgpt",
+    "search",
+    "exa-alternative",
+    "zero-dependency"
+  ],
+  "author": "James Hoffmann",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hffmnnj/openai_websearch.git"
+  },
+  "homepage": "https://github.com/hffmnnj/openai_websearch",
+  "bugs": {
+    "url": "https://github.com/hffmnnj/openai_websearch/issues"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {}
 }
