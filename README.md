@@ -53,7 +53,7 @@ Add to your MCP client config:
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `CODEX_AUTH_PATH` | `~/.codex/auth.json` | Path to Codex auth file |
-| `OPENAI_WEBSEARCH_MODEL` | `gpt-5.4` | Default OpenAI model |
+| `OPENAI_WEBSEARCH_MODEL` | `gpt-5.6-luna` | Default OpenAI model |
 
 ## How it works
 
