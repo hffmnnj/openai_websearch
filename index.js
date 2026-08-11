@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 
 /**
- * openai_websearch — MCP server (official @modelcontextprotocol/sdk).
+ * openai_websearch — MCP server entry point.
  *
- * Exposes OpenAI's native server-side web search as MCP tools:
- *   - web_search       — Text web search with configurable context size
- *   - image_search     — Image search, returns image URLs
+ * Supports three transports:
+ *   stdio (default)   — node index.js
+ *   http              — node index.js --transport http [--port 3103] [--host 0.0.0.0]
  *
- * Auth: browser OAuth (URL), device-code flow, or existing Codex auth.
- * Run `node index.js login` or `node index.js login --device-code` to authenticate.
+ * CLI commands:
+ *   node index.js login               — browser OAuth flow
+ *   node index.js login --device-code — headless device-code flow
+ *   node index.js auth-status         — show auth status
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
+import { Command } from 'commander';
+import { createMcpServer } from './mcp.js';
 import { OpenAIWebSearch } from './lib/index.js';
 import {
   authenticateBrowser,
@@ -57,10 +58,10 @@ async function cmdAuthStatus() {
     console.error('[openai_websearch] Not authenticated. Run: node index.js login');
     process.exit(1);
   }
-  const expiry = data.tokens.access_token.split('.')[1];
+  const payload = data.tokens.access_token.split('.')[1];
   let exp = 'unknown';
   try {
-    const decoded = JSON.parse(Buffer.from(expiry, 'base64url').toString());
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString());
     exp = new Date((decoded.exp || 0) * 1000).toISOString();
   } catch {}
   console.error('[openai_websearch] Auth file: ' + path);
@@ -69,98 +70,35 @@ async function cmdAuthStatus() {
   process.exit(0);
 }
 
-// ─── MCP Server ───────────────────────────────────────────────────────────────
-
-function createServer() {
-  const server = new McpServer({
-    name: 'openai_websearch',
-    version: '1.2.0',
-  });
-
-  const client = new OpenAIWebSearch();
-
-  server.registerTool(
-    'web_search',
-    {
-      title: 'Web Search',
-      description: `Search the web using OpenAI's native server-side web search. Returns clean, up-to-date results with real URLs and citations. Powered by your ChatGPT/Codex subscription.
-- contextSize: "low" (fast/cheap), "medium" (balanced, default), "high" (thorough/deep)
-- All search happens server-side at OpenAI, not locally
-- Results include the queries OpenAI actually searched for`,
-      inputSchema: z.object({
-        query: z.string().min(1).describe('What to search for. Be specific for best results.'),
-        context_size: z.enum(['low', 'medium', 'high']).optional().default('medium')
-          .describe('How much web context to retrieve'),
-        model: z.string().optional().describe('OpenAI model to use (default: gpt-5.6-luna)'),
-      }),
-    },
-    async ({ query, context_size, model }) => {
-      const result = await client.search(query, {
-        contextSize: context_size,
-        model,
-      });
-
-      const parts = [];
-      if (result.searchQueries.length > 0) {
-        parts.push(`**Searched for:** ${result.searchQueries.map(q => `"${q}"`).join(', ')}\n`);
-      }
-      if (result.text) parts.push(result.text);
-      if (result.usage) {
-        const u = result.usage;
-        parts.push(`\n---\n*Tokens: ${u.input_tokens || 0} in, ${u.output_tokens || 0} out (${u.total_tokens || 0} total)*`);
-      }
-      return { content: [{ type: 'text', text: parts.join('\n') }] };
-    },
-  );
-
-  server.registerTool(
-    'image_search',
-    {
-      title: 'Image Search',
-      description: `Search the web for images using OpenAI's native web search. Returns image URLs, titles, and source pages.
-- Returns real image URLs from web pages, not AI-generated images
-- contextSize controls search depth`,
-      inputSchema: z.object({
-        query: z.string().min(1).describe('What images to search for.'),
-        context_size: z.enum(['low', 'medium', 'high']).optional().default('medium')
-          .describe('Search depth'),
-        model: z.string().optional().describe('OpenAI model to use (default: gpt-5.6-luna)'),
-      }),
-    },
-    async ({ query, context_size, model }) => {
-      const result = await client.imageSearch(query, {
-        contextSize: context_size,
-        model,
-      });
-
-      const parts = [];
-      if (result.searchQueries.length > 0) {
-        parts.push(`**Searched for:** ${result.searchQueries.map(q => `"${q}"`).join(', ')}\n`);
-      }
-      if (result.text) parts.push(result.text);
-      if (result.usage) {
-        const u = result.usage;
-        parts.push(`\n---\n*Tokens: ${u.input_tokens || 0} in, ${u.output_tokens || 0} out*`);
-      }
-      return { content: [{ type: 'text', text: parts.join('\n') }] };
-    },
-  );
-
-  return server;
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
   const args = process.argv.slice(2);
 
+  // Commands
   if (args.includes('login')) return cmdLogin(args);
   if (args.includes('auth-status')) return cmdAuthStatus();
 
-  const server = createServer();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('[openai_websearch] MCP server running on stdio (official MCP SDK)');
+  // Transport selection
+  const program = new Command();
+  program
+    .option('--transport <stdio|http>', 'Transport type', process.env.OPENAI_WEBSEARCH_TRANSPORT || 'stdio')
+    .option('--port <number>', 'HTTP port', process.env.OPENAI_WEBSEARCH_PORT || '3103')
+    .option('--host <string>', 'HTTP host', process.env.OPENAI_WEBSEARCH_HOST || '0.0.0.0')
+    .allowUnknownOption()
+    .parse(process.argv);
+
+  const opts = program.opts();
+
+  if (opts.transport === 'http') {
+    const { startServer } = await import('./http.js');
+    startServer(parseInt(opts.port), opts.host);
+  } else {
+    const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
+    const server = createMcpServer();
+    await server.connect(new StdioServerTransport());
+    console.error('[openai_websearch] MCP server running on stdio (official MCP SDK)');
+  }
 }
 
 main().catch(e => {
