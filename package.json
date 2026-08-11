@@ -1,0 +1,15 @@
+{
+  "name": "openai_websearch",
+  "version": "1.0.0",
+  "description": "Self-hostable MCP server that exposes OpenAI's native web search via the ChatGPT/Codex Responses API. Uses your existing Codex subscription for auth.",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "openai_websearch": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {}
+}
